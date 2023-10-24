@@ -7,8 +7,13 @@ export const ConversationApi = ApiSlice.injectEndpoints({
     friends: builder.query({
       query: (data) => {
         const { email } = data;
-        const limit = 5;
-        return `/conversations?participants_like=${email}&_page=1&_limit=${limit}&_sort=timestamp&_order=desc`;
+        const limit = 10;
+        const page = 1;
+        return `/conversations?participants_like=${email}&_page=${page}&_limit=${limit}&_sort=timestamp&_order=desc`;
+      },
+      transformResponse: (apiResponse, meta) => {
+        const totalCount = meta.response?.headers.get("X-Total-Count");
+        return { data: apiResponse, totalCount };
       },
       onCacheEntryAdded: async (
         arg,
@@ -28,17 +33,38 @@ export const ConversationApi = ApiSlice.injectEndpoints({
           await cacheDataLoaded;
           socket.on("conversation", (data) => {
             updateCachedData((draft) => {
-              const updateconv = draft.find(
+              const updateconv = draft?.data?.find(
                 (item) => item.id == data?.body?.id
               );
-              
+
               updateconv.message = data?.body?.message;
               updateconv.timestamp = data?.body?.timestamp;
             });
           });
         } catch (e) {}
         await cacheEntryRemoved;
-        socket.close()
+        socket.close();
+      },
+    }),
+    getmorefriends: builder.query({
+      query: ({ user, page }) => {
+        const limit = 10;
+        return `/conversations?participants_like=${user.email}&_page=${page}&_limit=${limit}&_sort=timestamp&_order=desc`;
+      },
+      onQueryStarted: async ({ user, page }, { dispatch, queryFulfilled }) => {
+        try {
+          const requestfullfill = await queryFulfilled;
+          if (requestfullfill?.data?.length > 0) {
+            dispatch(
+              ApiSlice.util.updateQueryData("friends", user, (draft) => {
+                return {
+                  data: [...draft.data, ...requestfullfill?.data],
+                  totalCount: Number(draft.totalCount),
+                };
+              })
+            );
+          }
+        } catch (e) {}
       },
     }),
 
@@ -59,8 +85,8 @@ export const ConversationApi = ApiSlice.injectEndpoints({
 
         const optimisticaddOne = dispatch(
           ApiSlice.util.updateQueryData("friends", sender, (draft) => {
-            const lastlength = draft.length + 1;
-            draft.push({ id: lastlength, ...arg });
+            const lastlength = draft?.data?.length + 1;
+            draft?.data?.push({ id: lastlength, ...arg });
           })
         );
         try {
@@ -99,7 +125,9 @@ export const ConversationApi = ApiSlice.injectEndpoints({
 
         const optimisticUpdateOne = dispatch(
           ApiSlice.util.updateQueryData("friends", sender, (draft) => {
-            const drafselectedchange = draft.find((item) => item.id == id);
+            const drafselectedchange = draft?.data?.find(
+              (item) => item.id == id
+            );
             drafselectedchange.message = arg.data.message;
             drafselectedchange.timestamp = arg.data.timestamp;
           })
@@ -125,7 +153,6 @@ export const ConversationApi = ApiSlice.injectEndpoints({
           dispatch(MessagesApi.endpoints.addMessage.initiate(newmessage))
             .unwrap()
             .then((res) => {
-                
               // dispatch(
               //   ApiSlice.util.updateQueryData(
               //     "message",
